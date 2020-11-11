@@ -8,28 +8,37 @@ KeRegisterObjectDpc (
 {
     KIRQL oldIrql;
     BOOLEAN result;
+    PKEVENT event;
+
+    event = (PKEVENT)Object;
 
     WaitBlock->WaitType = WaitDpc;
     WaitBlock->BlockState = WaitBlockActive;
     WaitBlock->Dpc = Dpc;
-    WaitBlock->Object = SystemArgument1;
+    WaitBlock->Object = Object;
 
     oldIrql = KeRaiseIrqlToDispatchLevel();
-    KiAcquireKobjectLock(Object);
+    KiAcquireKobjectLock(event);
 
-    if ((SystemArgument1->Header.SignalState <= 0) || 
-        (KiWaitSatisfyOther(SystemArgument1), result = 1, QueueIfSignaled))
-  {
-    InsertTailList(&SystemArgument1->Header.WaitListHead, &SystemArgument2->WaitListEntry);
-    KiReleaseKobjectLock(Object);
+    if (event->Header.SignalState > 0)
+    {
+        KiWaitSatisfyOther(event);
+
+        if (QueueIfSignaled == FALSE)
+        {        
+            WaitBlock->BlockState = WaitBlockInactive;
+            KeInsertQueueDpc(Dpc, event, WaitBlock);
+
+            KiReleaseKobjectLock(event);
+            KiExitDispatcher(KeGetCurrentPrcb(), 0, AdjustUnwait, IO_NO_INCREMENT, oldIrql);
+
+            return TRUE;
+        }
+    }
+
+    InsertTailList(&event->Header.WaitListHead, &WaitBlock->WaitListEntry);
+
+    KiReleaseKobjectLock(event);
     KeLowerIrql(oldIrql)
-  }
-  else
-  {
-    SystemArgument2->BlockState = WaitBlockInactive;
-    KeInsertQueueDpc(Dpc, SystemArgument1, SystemArgument2);
-    KiReleaseKobjectLock(Object);
-    KiExitDispatcher(KeGetCurrentPrcb(), 0, 1, 0, oldIrql);
-  }
-  return result;
+    return FALSE;
 }
