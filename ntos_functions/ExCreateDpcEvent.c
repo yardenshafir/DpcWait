@@ -9,14 +9,15 @@ ExCreateDpcEvent (
     NTSTATUS status;
     PKEVENT event;
 
-    event = 0;
-    waitEvent = (PDPC_WAIT_EVENT)ExAllocatePool2(NonPagedPool,
-                                                 sizeof(DPC_WAIT_EVENT),
-                                                 'WcpD');
-    if (!waitEvent)
+    event = NULL;
+    waitEvent = (PDPC_WAIT_EVENT)ExAllocatePool(NonPagedPool,
+                                                sizeof(DPC_WAIT_EVENT),
+                                                'WcpD');
+    if (waitEvent == NULL)
     {    
         return STATUS_INSUFFICIENT_RESOURCES;
     }
+
     status = ObCreateObject(KernelMode,
                             ExEventObjectType,
                             NULL,
@@ -30,18 +31,20 @@ ExCreateDpcEvent (
     {
         KeInitializeEvent(event, SynchronizationEvent, FALSE);
         ObDeleteCapturedInsertInfo(event);
-        ObfReferenceObjectWithTag(event, 'eDxE');
-        ObfDereferenceObjectWithTag(event, 'tlfD');
-        *WaitStruct = waitEvent;
-        status = STATUS_SUCCESS;
-        *Event = event;
+        ObReferenceObjectWithTag(event, 'eDxE');
+        ObDereferenceObject(event);
+
         waitEvent->Dpc = Dpc;
         waitEvent->Event = event;
         waitEvent->WaitBlock = WaitBlockInactive;
+
+        status = STATUS_SUCCESS;
+        *WaitStruct = waitEvent;
+        *Event = event;
     }
     else
     {
-      ExFreePool(waitEvent);
+        ExFreePool(waitEvent);
     }
     return status;
 }
