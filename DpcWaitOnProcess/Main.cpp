@@ -15,6 +15,7 @@ typedef struct _DPC_WAIT_EVENT
     PVOID Object;
 } DPC_WAIT_EVENT, *PDPC_WAIT_EVENT;
 
+EXTERN_C
 NTSTATUS
 ExCreateDpcEvent (
     _Outptr_ PDPC_WAIT_EVENT* DpcWaitEvent,
@@ -22,17 +23,20 @@ ExCreateDpcEvent (
     _In_ PKDPC Dpc
 );
 
+EXTERN_C
 NTSTATUS
 ExQueueDpcEventWait (
     _In_ PDPC_WAIT_EVENT DpcWait,
     _In_ BOOLEAN WaitIfNotSignaled
 );
 
+EXTERN_C
 NTSTATUS
 ExCancelDpcEventWait (
     _In_ PDPC_WAIT_EVENT DpcWait
 );
 
+EXTERN_C
 NTSTATUS
 ExDeleteDpcEvent (
     _In_ PDPC_WAIT_EVENT DpcWait
@@ -40,30 +44,31 @@ ExDeleteDpcEvent (
 
 static KDEFERRED_ROUTINE DpcRoutine;
 PDPC_WAIT_EVENT g_DpcWait;
+EX_PUSH_LOCK g_WaitLock;
 KDPC g_Dpc;
 PKEVENT g_Event;
 
 static
 void
 DpcRoutine (
-    PKDPC Dpc,
-    PVOID DeferredContext,
-    PVOID SystemArgument1,
-    PVOID SystemArgument2
+    _In_ PKDPC Dpc,
+    _In_opt_ PVOID DeferredContext,
+    _In_opt_ PVOID SystemArgument1,
+    _In_opt_ PVOID SystemArgument2
     )
 {
     UNREFERENCED_PARAMETER(Dpc);
     UNREFERENCED_PARAMETER(DeferredContext);
     UNREFERENCED_PARAMETER(SystemArgument1);
     UNREFERENCED_PARAMETER(SystemArgument2);
-    DbgPrintEx(DPFLT_IHVDRIVER_ID, DPFLT_ERROR_LEVEL, "Process terminated\n");
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "Process terminated\n");
 }
 
 void
 CreateProcessNotifyRoutineEx (
-    PEPROCESS Process,
-    HANDLE ProcessId,
-    PPS_CREATE_NOTIFY_INFO CreateInfo
+    _In_ PEPROCESS Process,
+    _In_ HANDLE ProcessId,
+    _In_ PPS_CREATE_NOTIFY_INFO CreateInfo
     )
 {
     NTSTATUS status;
@@ -83,19 +88,22 @@ CreateProcessNotifyRoutineEx (
     //
     // Only wait on one process
     //
+    ExAcquirePushLockExclusive(&g_WaitLock);
     if (g_DpcWait == nullptr)
     {
         KeInitializeDpc(&g_Dpc, DpcRoutine, &g_Dpc);
         status = ExCreateDpcEvent(&g_DpcWait, &g_Event, &g_Dpc);
         if (!NT_SUCCESS(status))
         {
-            DbgPrintEx(DPFLT_IHVDRIVER_ID, DPFLT_ERROR_LEVEL, "ExCreateDpcEvent failed with status: 0x%x\n", status);
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "ExCreateDpcEvent failed with status: 0x%x\n", status);
+            ExReleasePushLockExclusive(&g_WaitLock);
             return;
         }
 
         g_DpcWait->Object = (PVOID)Process;
         ExQueueDpcEventWait(g_DpcWait, TRUE);
     }
+    ExReleasePushLockExclusive(&g_WaitLock);
 }
 
 VOID
@@ -128,6 +136,6 @@ DriverEntry (
     UNREFERENCED_PARAMETER(RegistryPath);
 
     DriverObject->DriverUnload = DriverUnload;
-
+    ExInitializePushLock(&g_WaitLock);
     return PsSetCreateProcessNotifyRoutineEx(&CreateProcessNotifyRoutineEx, FALSE);
 }
